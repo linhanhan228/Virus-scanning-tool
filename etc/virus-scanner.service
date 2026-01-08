@@ -1,0 +1,31 @@
+[Unit]
+Description=Enterprise Virus Scanner Service
+After=network.target
+
+[Service]
+Type=simple
+User=root
+Group=root
+ExecStart=/usr/bin/virus-scanner monitor --start
+ExecStop=/usr/bin/virus-scanner monitor --stop
+Restart=on-failure
+RestartSec=10
+StandardOutput=syslog
+StandardError=syslog
+SyslogIdentifier=virus-scanner
+
+# 内存限制
+MemoryMax=200M
+MemoryHigh=150M
+
+# CPU限制
+CPUQuota=70%
+
+# 安全加固
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/virus-scanner /var/log/virus-scanner
+
+[Install]
+WantedBy=multi-user.target

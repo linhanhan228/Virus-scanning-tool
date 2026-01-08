@@ -1,0 +1,129 @@
+# 企业级病毒查杀工具配置示例
+# /etc/virus-scanner/config.yaml
+
+# 扫描模式配置
+scan_modes:
+  # 快速扫描路径（系统关键路径）
+  quick_scan_paths:
+    - /bin
+    - /sbin
+    - /usr/bin
+    - /usr/sbin
+    - /etc
+  
+  # 排除路径
+  exclude_paths:
+    - /proc
+    - /sys
+    - /dev
+    - /var/lib/virus-scanner
+  
+  # 排除的文件扩展名
+  exclude_extensions:
+    - log
+    - txt
+    - tmp
+  
+  # 最大扫描文件大小 (字节)
+  max_file_size: 104857600  # 100MB
+
+# 性能配置
+performance:
+  # 线程池大小 (默认使用CPU核心数)
+  thread_pool_size: 8
+  
+  # CPU使用率限制 (%)
+  cpu_usage_limit: 70.0
+  
+  # 内存限制 (MB)
+  memory_limit_mb: 200
+  
+  # 扫描缓冲区大小 (字节)
+  scan_buffer_size: 8192
+
+# 安全配置
+security:
+  # 运行用户 (留空则使用root)
+  run_as_user: ""
+  
+  # 数据库加密
+  database_encryption: true
+  
+  # 审计日志
+  audit_log_enabled: true
+  
+  # 隔离目录
+  quarantine_dir: /var/lib/virus-scanner/quarantine
+
+# 日志配置
+logging:
+  # 日志级别: DEBUG, INFO, WARN, ERROR
+  level: INFO
+  
+  # 日志目录
+  log_dir: /var/log/virus-scanner
+  
+  # 日志文件大小限制 (MB)
+  max_size_mb: 50
+  
+  # 保留日志文件数量
+  max_files: 10
+  
+  # 远程日志 (可选)
+  remote_logging:
+    endpoint: log.company.com:514
+    use_tls: true
+    api_key: your-api-key-here
+
+# 更新配置
+update:
+  # 启用自动更新
+  enabled: true
+  
+  # 更新计划
+  schedule:
+    frequency: daily    # daily, weekly
+    time: "03:00"       # 24小时制
+    day_of_week: null   # 0-6, 仅weekly时使用
+  
+  # 病毒库镜像地址
+  mirror_url: https://database.clamav.net
+  
+  # 验证签名
+  verify_signatures: true
+
+# 文件监控配置
+monitor:
+  # 启用实时监控
+  enabled: false
+  
+  # 监控路径
+  watch_paths:
+    - /tmp
+    - /var/tmp
+  
+  # 监控事件
+  events:
+    - create
+    - modify
+  
+  # 监控动作
+  actions:
+    on_create: quarantine
+    on_modify: scan
+    on_delete: log
+    auto_quarantine: false
+
+# 报告配置
+report:
+  # 启用报告生成
+  enabled: true
+  
+  # 报告格式: json, yaml, html, text
+  format: json
+  
+  # 报告输出目录
+  output_dir: /var/lib/virus-scanner/reports
+  
+  # 包含详细信息
+  include_details: true
