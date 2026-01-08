@@ -58,9 +58,12 @@ pub struct RemoteLoggingConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UpdateConfig {
     pub enabled: bool,
+    pub auto_download: bool,
     pub schedule: UpdateSchedule,
     pub mirror_url: String,
     pub verify_signatures: bool,
+    pub database_path: PathBuf,
+    pub backup_path: PathBuf,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -68,6 +71,7 @@ pub struct UpdateSchedule {
     pub frequency: String,
     pub time: String,
     pub day_of_week: Option<u8>,
+    pub check_interval_hours: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -140,13 +144,17 @@ impl Default for ScannerConfig {
             },
             update: UpdateConfig {
                 enabled: true,
+                auto_download: true,
                 schedule: UpdateSchedule {
                     frequency: "weekly".to_string(),
                     time: "03:00".to_string(),
                     day_of_week: Some(0),
+                    check_interval_hours: 24,
                 },
                 mirror_url: "https://database.clamav.net".to_string(),
                 verify_signatures: false,
+                database_path: PathBuf::from("/var/lib/virus-scanner/database"),
+                backup_path: PathBuf::from("/var/lib/virus-scanner/backup"),
             },
             monitor: MonitorConfig {
                 enabled: false,

@@ -106,7 +106,7 @@ impl SignatureDatabase {
                 .push(sig.id.clone());
         }
 
-        *self.memory_usage.lock().unwrap() = self.calculate_memory_usage();
+        *self.memory_usage.lock().unwrap() = self.calculate_memory_usage().await;
 
         log::info!("已加载 {} 条病毒特征码", sig_map.len());
 
@@ -191,7 +191,7 @@ impl SignatureDatabase {
         Ok(None)
     }
 
-    pub fn scan_file_sync<P: AsRef<Path>>(
+    pub async fn scan_file_sync<P: AsRef<Path>>(
         &self,
         path: P,
     ) -> Option<ThreatSignature> {
@@ -199,7 +199,7 @@ impl SignatureDatabase {
 
         let mut cache = self.hash_cache.lock().unwrap();
         if let Some(cached) = cache.get(&path_str) {
-            let signatures = self.signatures.blocking_read();
+            let signatures = self.signatures.read().await;
             if let Some(sig_id) = signatures.get(cached) {
                 return Some(ThreatSignature {
                     id: sig_id.id.clone(),
@@ -223,7 +223,7 @@ impl SignatureDatabase {
 
         let file_hash = Self::calculate_hash(&file_data);
 
-        let mut signatures = self.signatures.blocking_write();
+        let mut signatures = self.signatures.write().await;
         if let Some(sig_id) = signatures.get(&file_hash) {
             let mut cache = self.hash_cache.lock().unwrap();
             cache.put(path_str, sig_id.id.clone());
@@ -305,16 +305,16 @@ impl SignatureDatabase {
         }
     }
 
-    fn calculate_memory_usage(&self) -> u64 {
-        self.signatures.blocking_read().values().map(|s| s.pattern.len() as u64).sum()
+    async fn calculate_memory_usage(&self) -> u64 {
+        self.signatures.read().await.values().map(|s| s.pattern.len() as u64).sum()
     }
 
     pub fn get_memory_usage(&self) -> u64 {
         *self.memory_usage.lock().unwrap()
     }
 
-    pub fn get_signature_count(&self) -> usize {
-        self.signatures.blocking_read().len()
+    pub async fn get_signature_count(&self) -> usize {
+        self.signatures.read().await.len()
     }
 
     pub fn get_last_update(&self) -> Option<Instant> {
@@ -348,7 +348,7 @@ impl SignatureDatabase {
                 .push(sig.id.clone());
         }
 
-        *self.memory_usage.lock().unwrap() = self.calculate_memory_usage();
+        *self.memory_usage.lock().unwrap() = self.calculate_memory_usage().await;
 
         Ok(())
     }

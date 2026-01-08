@@ -1,4 +1,5 @@
 use crate::scanner::{ScanResult, ThreatType, RiskLevel};
+use anyhow::Context;
 use chrono::{DateTime, Local};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -160,6 +161,9 @@ impl ReportGenerator {
     }
 
     pub fn save(&self, report: &ScanReport, format: ReportFormat) -> Result<PathBuf, anyhow::Error> {
+        std::fs::create_dir_all(&self.output_dir)
+            .context(format!("无法创建报告目录: {:?}", self.output_dir))?;
+        
         let filename = format!("report_{}.{}", report.timestamp.format("%Y%m%d_%H%M%S"), format.extension());
         let filepath = self.output_dir.join(&filename);
 

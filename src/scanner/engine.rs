@@ -183,7 +183,7 @@ impl ScannerEngine {
                                     stats.files_scanned.fetch_add(1, Ordering::Relaxed);
                                     stats.bytes_scanned.fetch_add(metadata.len() as usize, Ordering::Relaxed);
 
-                                    if let Some(threat) = signature_db.scan_file_sync(&path) {
+                                    if let Some(threat) = signature_db.scan_file_sync(&path).await {
                                         stats.threats_found.fetch_add(1, Ordering::Relaxed);
                                         results.push(ScanResult {
                                             file_path: path.clone(),

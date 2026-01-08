@@ -80,17 +80,27 @@ update:
   # 启用自动更新
   enabled: true
   
+  # 自动下载病毒库
+  auto_download: true
+  
   # 更新计划
   schedule:
     frequency: daily    # daily, weekly
     time: "03:00"       # 24小时制
     day_of_week: null   # 0-6, 仅weekly时使用
+    check_interval_hours: 24  # 检查更新的间隔（小时）
   
   # 病毒库镜像地址
   mirror_url: https://database.clamav.net
   
   # 验证签名
   verify_signatures: true
+  
+  # 病毒库路径
+  database_path: /var/lib/virus-scanner/database
+  
+  # 备份路径
+  backup_path: /var/lib/virus-scanner/backup
 
 # 文件监控配置
 monitor:

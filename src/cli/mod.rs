@@ -121,6 +121,16 @@ impl Command {
     ) -> Result<()> {
         println!("开始病毒扫描...");
 
+        let database_path = config.update.database_path.clone();
+        let backup_path = config.update.backup_path.clone();
+        let updater = Arc::new(DatabaseUpdater::new(
+            config.update.mirror_url.clone(),
+            database_path.clone(),
+            backup_path,
+        ));
+
+        updater.check_and_auto_download(&config.update).await?;
+
         let scan_mode = match args.scan_type.as_ref().map(|s| s.as_str()) {
             Some("quick") | Some("fast") => ScanMode::Quick,
             Some("full") => ScanMode::Full,
@@ -342,7 +352,7 @@ impl Command {
 
         if args.database || args.system {
             println!("\n病毒库信息:");
-            println!("  签名数量: {}", signature_db.get_signature_count());
+            println!("  签名数量: {}", signature_db.get_signature_count().await);
             println!("  内存占用: {:.2} MB", signature_db.get_memory_usage() as f64 / 1024.0 / 1024.0);
             println!("  最后更新: {:?}", signature_db.get_last_update());
             println!("  病毒库版本: {}", signature_db.get_version());

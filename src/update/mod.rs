@@ -6,6 +6,7 @@ use std::time::{Duration, Instant};
 use tokio::fs::File;
 use tokio::io::{AsyncWriteExt, BufWriter};
 use tokio::sync::mpsc;
+use crate::config::UpdateConfig;
 
 #[derive(Debug, Clone)]
 pub struct UpdateInfo {
@@ -81,9 +82,10 @@ impl DatabaseUpdater {
 
         let client = reqwest::Client::new();
 
-        let version_url = format!("{}/version.txt", self.mirror_url);
+        let main_url = format!("{}/main.cvd", self.mirror_url);
+        
         let response = client
-            .get(&version_url)
+            .head(&main_url)
             .send()
             .await
             .context("无法连接到病毒库服务器")?;
@@ -92,12 +94,27 @@ impl DatabaseUpdater {
             return Err(anyhow::anyhow!("服务器返回错误: {}", response.status()));
         }
 
-        let version = response
-            .text()
-            .await
-            .context("无法读取版本信息")?;
+        let etag = response
+            .headers()
+            .get("etag")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("")
+            .to_string();
 
-        let version = version.trim().to_string();
+        let last_modified = response
+            .headers()
+            .get("last-modified")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("")
+            .to_string();
+
+        let version = if !etag.is_empty() {
+            etag
+        } else if !last_modified.is_empty() {
+            last_modified
+        } else {
+            chrono::Utc::now().format("%Y%m%d").to_string()
+        };
 
         let mut status = self.status.lock().unwrap();
         let old_version = status.latest_version.clone();
@@ -309,6 +326,99 @@ impl DatabaseUpdater {
         log::info!("已成功回滚到版本: {}", version);
 
         Ok(())
+    }
+
+    pub async fn check_and_auto_download(&self, config: &UpdateConfig) -> Result<bool, anyhow::Error> {
+        if !config.enabled || !config.auto_download {
+            return Ok(false);
+        }
+
+        if let Err(e) = std::fs::create_dir_all(&self.local_database_path) {
+            log::warn!("无法创建病毒库目录: {}", e);
+            return Ok(false);
+        }
+
+        if let Err(e) = std::fs::create_dir_all(&self.backup_path) {
+            log::warn!("无法创建备份目录: {}", e);
+        }
+
+        let database_files = ["main.cvd", "daily.cvd", "bytecode.cvd"];
+        let has_database = database_files.iter().any(|file| {
+            self.local_database_path.join(file).exists()
+        });
+
+        if !has_database {
+            log::info!("病毒库文件不存在，开始自动下载...");
+            match self.perform_update().await {
+                Ok(_) => {
+                    log::info!("病毒库下载成功");
+                    return Ok(true);
+                }
+                Err(e) => {
+                    log::warn!("病毒库自动下载失败: {}", e);
+                    return Ok(false);
+                }
+            }
+        }
+
+        if let Some(last_check) = *self.last_check.lock().unwrap() {
+            let elapsed = last_check.elapsed();
+            let interval = Duration::from_secs(config.schedule.check_interval_hours * 3600);
+
+            if elapsed >= interval {
+                log::info!("距离上次更新已超过 {} 小时，检查更新...", config.schedule.check_interval_hours);
+                match self.check_for_updates().await {
+                    Ok(Some(_version)) => {
+                        log::info!("发现新版本，开始下载...");
+                        match self.perform_update().await {
+                            Ok(_) => {
+                                log::info!("病毒库更新成功");
+                                return Ok(true);
+                            }
+                            Err(e) => {
+                                log::warn!("病毒库自动更新失败: {}", e);
+                                return Ok(false);
+                            }
+                        }
+                    }
+                    Ok(None) => {
+                        log::info!("当前已是最新版本");
+                        return Ok(false);
+                    }
+                    Err(e) => {
+                        log::warn!("检查更新失败: {}", e);
+                        return Ok(false);
+                    }
+                }
+            }
+        } else {
+            log::info!("首次运行，检查病毒库更新...");
+            match self.check_for_updates().await {
+                Ok(Some(_version)) => {
+                    log::info!("发现新版本，开始下载...");
+                    match self.perform_update().await {
+                        Ok(_) => {
+                            log::info!("病毒库下载成功");
+                            return Ok(true);
+                        }
+                        Err(e) => {
+                            log::warn!("病毒库自动下载失败: {}", e);
+                            return Ok(false);
+                        }
+                    }
+                }
+                Ok(None) => {
+                    log::info!("当前已是最新版本");
+                    return Ok(false);
+                }
+                Err(e) => {
+                    log::warn!("检查更新失败: {}", e);
+                    return Ok(false);
+                }
+            }
+        }
+
+        Ok(false)
     }
 }
 

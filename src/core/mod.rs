@@ -56,7 +56,7 @@ impl VirusScanner {
 
         log::info!(
             "病毒库已加载，签名数量: {}",
-            self.signature_db.get_signature_count()
+            self.signature_db.get_signature_count().await
         );
 
         drop(config);
@@ -214,18 +214,18 @@ impl VirusScanner {
         Ok(())
     }
 
-    pub fn get_signature_count(&self) -> usize {
-        self.signature_db.get_signature_count()
+    pub async fn get_signature_count(&self) -> usize {
+        self.signature_db.get_signature_count().await
     }
 
     pub fn get_memory_usage(&self) -> u64 {
         self.signature_db.get_memory_usage()
     }
 
-    pub fn get_status(&self) -> ScannerStatus {
+    pub async fn get_status(&self) -> ScannerStatus {
         ScannerStatus {
             running: true,
-            signature_count: self.signature_db.get_signature_count(),
+            signature_count: self.signature_db.get_signature_count().await,
             memory_usage_bytes: self.signature_db.get_memory_usage(),
             last_scan: None,
             database_version: self.signature_db.get_version(),

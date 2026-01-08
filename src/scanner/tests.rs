@@ -5,10 +5,10 @@ use std::path::PathBuf;
 mod tests {
     use super::*;
 
-    #[test]
-    fn test_signature_database_creation() {
+    #[tokio::test]
+    async fn test_signature_database_creation() {
         let db = SignatureDatabase::new();
-        assert_eq!(db.get_signature_count(), 0);
+        assert_eq!(db.get_signature_count().await, 0);
     }
 
     #[test]
