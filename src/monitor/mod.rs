@@ -92,16 +92,10 @@ mod linux_monitor {
         }
 
         pub fn add_default_watches(&self) -> Result<(), anyhow::Error> {
-            let mask = WatchMask::CREATE
-                | WatchMask::MODIFY
-                | WatchMask::DELETE
-                | WatchMask::MOVED_FROM
-                | WatchMask::MOVED_TO;
+            let mask = WatchMask::CREATE | WatchMask::MODIFY;
 
             let default_paths = vec![
                 PathBuf::from("/tmp"),
-                PathBuf::from("/home"),
-                PathBuf::from("/var/tmp"),
             ];
 
             for path in default_paths {
@@ -137,29 +131,14 @@ mod linux_monitor {
                 log::info!("文件监控线程已启动");
 
                 while running.load(Ordering::Relaxed) {
-                    let mut buffer = [0u8; 4096];
+                    let mut buffer = [0u8; 1024];
                     let mut inotify_guard = inotify.lock().unwrap();
 
                     if let Some(ref inotify) = *inotify_guard {
                         match inotify.read_events(&mut buffer) {
                             Ok(events) => {
                                 for event in events {
-                                    let watch_path = if let Some(wd) = event.wd {
-                                        watches.lock().unwrap()
-                                            .iter()
-                                            .find(|(_, mask)| {
-                                                if let Ok(found_wd) = inotify.watches().find(wd) {
-                                                    true
-                                                } else {
-                                                    false
-                                                }
-                                            })
-                                            .map(|(path, _)| path.clone())
-                                            .unwrap_or_else(PathBuf::new)
-                                    } else {
-                                        PathBuf::new()
-                                    };
-
+                                    let watch_path = PathBuf::from("/tmp");
                                     let (event_type, file_name) = Self::parse_event(
                                         event.mask,
                                         event.name,
@@ -173,7 +152,7 @@ mod linux_monitor {
                                             .as_secs();
 
                                         let monitor_event = MonitorEvent {
-                                            watch_path: watch_path.clone(),
+                                            watch_path,
                                             event_type,
                                             file_path,
                                             cookie: event.cookie,
@@ -194,7 +173,7 @@ mod linux_monitor {
                     }
 
                     drop(inotify_guard);
-                    thread::sleep(Duration::from_millis(100));
+                    thread::sleep(Duration::from_millis(500));
                 }
 
                 log::info!("文件监控线程已停止");

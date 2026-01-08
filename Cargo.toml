@@ -97,5 +97,22 @@ api = ["warp", "tokio-tungstenite"]
 opt-level = 3
 lto = true
 codegen-units = 1
+[profile.release.build-override]
+opt-level = 3
+codegen-units = 1
+
+[lib]
+[package.metadata.docs.rs]
+all-features = true
+
+[lints.rust]
+dead_code = "allow"
+unused = "allow"
+unused_imports = "allow"
+unused_variables = "allow"
+unused_mut = "allow"
+
+[lints.clippy]
+all = "allow"
 
 [workspace]

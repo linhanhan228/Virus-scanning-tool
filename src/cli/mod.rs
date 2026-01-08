@@ -207,7 +207,7 @@ impl Command {
 
         let updater = Arc::new(DatabaseUpdater::new(
             config.update.mirror_url.clone(),
-            database_path,
+            database_path.clone(),
             backup_path,
         ));
 

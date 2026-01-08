@@ -58,7 +58,7 @@ impl SignatureDatabase {
         Self {
             signatures: Arc::new(RwLock::new(HashMap::new())),
             signatures_by_type: Arc::new(RwLock::new(HashMap::new())),
-            hash_cache: Arc::new(Mutex::new(LruCache::new(NonZeroUsize::new(10000).unwrap()))),
+            hash_cache: Arc::new(Mutex::new(LruCache::new(NonZeroUsize::new(1000).unwrap()))),
             memory_usage: Arc::new(Mutex::new(0)),
             last_update: Arc::new(Mutex::new(None)),
             version: Arc::new(Mutex::new(String::from("0.0.0"))),
