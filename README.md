@@ -1,1528 +1,598 @@
-# 病毒查杀工具使用文档
+# 病毒查杀工具
 
-## 目录
+本项目是一个基于 ClamAV 的病毒查杀工具，采用项目隔离方式安装，所有组件和病毒库都存储在项目本地目录中，不会影响系统全局环境。
 
-1. [项目概述](#项目概述)
-2. [系统要求](#系统要求)
-3. [安装指南](#安装指南)
-4. [配置说明](#配置说明)
-5. [命令行使用](#命令行使用)
-6. [功能详解](#功能详解)
-7. [API接口](#api接口)
-8. [故障排除](#故障排除)
-9. [最佳实践](#最佳实践)
+## 项目简介
 
----
+### 背景
 
-## 项目概述
+在企业级安全防护场景中，需要一个可靠的病毒扫描引擎来检测恶意软件。本项目集成 ClamAV——业界成熟的开源病毒扫描引擎，并采用项目隔离的安装方式，确保：
 
-### 简介
-
-本工具是一款基于Rust开发的企业级病毒查杀工具，专为Linux系统设计，具备高效的恶意软件检测与清除能力。工具集成了ClamAV病毒库，支持多种扫描模式、实时文件监控、自动病毒库更新等功能。
+- **环境隔离**：不修改系统配置，不污染全局环境
+- **独立部署**：每个项目可以拥有独立的病毒库版本
+- **灵活集成**：便于在不同环境中部署和迁移
+- **权限安全**：遵循最小权限原则运行
 
 ### 主要特性
 
-- **高效扫描引擎**: 支持快速扫描、全盘扫描和自定义路径扫描
-- **实时文件监控**: 基于inotify的实时文件系统监控
-- **ClamAV病毒库**: 集成开源可靠的ClamAV病毒特征码库
-- **自动更新机制**: 支持定时和手动更新病毒库
-- **多格式报告**: 支持JSON、YAML、HTML、TEXT格式的扫描报告
-- **RESTful API**: 提供完整的API接口，支持企业级集成
-- **安全设计**: 遵循最小权限原则，支持低权限运行
-- **性能优化**: 多线程并发扫描，智能资源调度
+- **项目隔离安装**：所有组件安装在项目 `local/` 目录，不污染系统
+- **病毒库本地化**：病毒库存储在 `database/` 目录，可独立管理
+- **环境变量隔离**：通过 `clamav_env.sh` 脚本设置专用环境变量
+- **零系统依赖**：不修改系统配置，不写入全局环境变量
+- **自动化流程**：提供编译、安装、更新、扫描一条龙脚本
 
-### 技术架构
+## 技术架构
 
-- **编程语言**: Rust 2021 Edition
-- **异步运行时**: Tokio
-- **病毒库**: ClamAV (main.cvd, daily.cvd, bytecode.cvd)
-- **文件监控**: inotify (Linux)
-- **API框架**: Warp
-- **数据库**: SQLite
-- **配置格式**: YAML
+### 核心组件
 
----
+| 组件 | 说明 |
+|------|------|
+| ClamAV | 开源病毒扫描引擎，提供病毒检测能力 |
+| freshclam | 病毒库更新工具 |
+| clamscan | 命令行扫描工具 |
+| clamd | 扫描守护进程（可选） |
 
-## 系统要求
+### 病毒库说明
 
-### 操作系统
+ClamAV 病毒库包含以下主要文件：
 
-- Ubuntu 20.04+
-- CentOS 7+
-- Debian 10+
-- 其他主流Linux发行版
+| 文件 | 大小 | 说明 |
+|------|------|------|
+| main.cvd | ~150MB | 主病毒库，包含主要病毒特征码 |
+| daily.cvd | ~10-20MB | 每日更新，包含最新病毒特征码 |
+| bytecode.cvd | ~500KB | 字节码库，包含高级检测规则 |
 
-### 硬件要求
+## 目录结构
 
-#### 标准配置
-- **CPU**: 多核处理器，建议4核以上
-- **内存**: 最小2GB，建议4GB以上
-- **磁盘**: 至少500MB可用空间（病毒库约200MB）
-- **网络**: 需要互联网连接以更新病毒库
+```
+virus-scanning-tool/
+├── local/                  # ClamAV 本地安装目录
+│   ├── bin/               # 可执行文件 (clamscan, freshclam 等)
+│   ├── sbin/              # 系统可执行文件
+│   ├── lib/               # 库文件
+│   ├── include/           # 头文件
+│   ├── etc/               # 配置文件模板
+│   └── var/               # 运行时数据
+│       ├── log/           # 日志目录
+│       └── lib/           # 临时数据库目录
+├── database/              # 病毒库存储目录
+├── build_clamav_local.sh  # 编译安装脚本
+├── clamav_env.sh          # 环境变量脚本
+├── update_clamav_db.sh    # 病毒库更新脚本
+├── run_scanner.sh         # 扫描运行脚本
+└── README.md              # 本文档
+```
 
-#### 轻量级配置（小型系统）
-- **CPU**: 单核处理器（1 CPU）
-- **内存**: 最小512MB，建议1GB以上
-- **磁盘**: 至少300MB可用空间（病毒库约200MB）
-- **网络**: 需要互联网连接以更新病毒库
+## 快速开始
 
-**轻量级特性**：
-- 单线程扫描，降低CPU使用率
-- 优化的内存管理，内存占用峰值控制在64MB以内
-- 简化的监控功能，仅监控关键目录
-- 减少日志输出，降低I/O压力
-- 禁用非必要功能（如数据库加密、审计日志）
-- 支持在资源受限的环境中稳定运行
+### 环境准备
 
-### 软件依赖
+确保系统已安装必要依赖：
 
-- Rust 1.70+ (编译时需要)
-- OpenSSL
-- SQLite 3
-
-### 权限要求
-
-- 普通用户权限即可运行
-- 某些功能需要root权限（如全盘扫描、系统目录监控）
-- 建议使用专用用户账户运行
-
----
-
-## 安装指南
-
-### 从源码编译
+**Ubuntu / Debian：**
 
 ```bash
-# 克隆项目
-git clone <repository-url>
-cd virus-scanning-tool
-
-# 编译发布版本
-cargo build --release
-
-# 安装到系统路径
-sudo cp target/release/virus-scanner /usr/local/bin/
-sudo chmod +x /usr/local/bin/virus-scanner
+sudo apt-get update
+sudo apt-get install -y \
+    cmake \
+    build-essential \
+    zlib1g-dev \
+    libcurl4-openssl-dev \
+    libxml2-dev \
+    libssl-dev \
+    check
 ```
 
-### 创建配置文件
+**macOS：**
 
 ```bash
-# 创建配置目录
-sudo mkdir -p /etc/virus-scanner
-
-# 生成默认配置文件
-virus-scanner scan --help  # 首次运行会自动生成配置文件
+brew install \
+    cmake \
+    openssl \
+    curl \
+    libxml2 \
+    zlib
 ```
 
-### 创建必要的目录
+### 步骤一：编译安装 ClamAV
 
 ```bash
-# 创建数据库目录
-sudo mkdir -p /var/lib/virus-scanner/database
-sudo mkdir -p /var/lib/virus-scanner/backups
-sudo mkdir -p /var/lib/virus-scanner/quarantine
-
-# 创建日志目录
-sudo mkdir -p /var/log/virus-scanner
-
-# 创建报告目录
-sudo mkdir -p /var/lib/virus-scanner/reports
-
-# 设置权限
-sudo chown -R $(whoami):$(whoami) /var/lib/virus-scanner
-sudo chown -R $(whoami):$(whoami) /var/log/virus-scanner
+./build_clamav_local.sh
 ```
 
-### 验证安装
+脚本执行过程：
+
+```
+[1/6] 检查系统依赖...
+[2/6] 创建本地目录结构...
+[3/6] 配置 CMake...
+[4/6] 编译 ClamAV（这可能需要几分钟）...
+[5/6] 安装到 local/ 目录...
+[6/6] 验证安装...
+✓ ClamAV 安装完成！
+```
+
+### 步骤二：加载环境变量
 
 ```bash
-# 查看版本信息
-virus-scanner --version
-
-# 查看帮助信息
-virus-scanner --help
-
-# 检查病毒库状态
-virus-scanner status --database
+source clamav_env.sh
 ```
 
----
+设置的环境变量：
 
-## 配置说明
+| 变量名 | 值 | 说明 |
+|--------|-----|------|
+| CLAMAV_ROOT | `{项目目录}/local` | ClamAV 安装根目录 |
+| PATH | `{$CLAMAV_ROOT}/bin:{$CLAMAV_ROOT}/sbin:{$PATH}` | 添加可执行文件路径 |
+| LD_LIBRARY_PATH | `{$CLAMAV_ROOT}/lib:{$LD_LIBRARY_PATH}` | 添加库文件路径 |
+| PKG_CONFIG_PATH | `{$CLAMAV_ROOT}/lib/pkgconfig:{$PKG_CONFIG_PATH}` | 添加 pkg-config 路径 |
+| CLAMAV_DATABASE_DIR | `{项目目录}/database` | 病毒库目录 |
+| CLAMAV_LOG_DIR | `{$CLAMAV_ROOT}/var/log/clamav` | 日志目录 |
 
-### 配置文件位置
-
-默认配置文件路径: `/etc/virus-scanner/config.yaml`
-
-可以通过 `-c` 或 `--config` 参数指定自定义配置文件。
-
-### 配置文件结构
-
-```yaml
-scan_modes:
-  quick_scan_paths:
-    - "/bin"
-    - "/sbin"
-    - "/usr/bin"
-    - "/etc"
-    - "/usr/sbin"
-  exclude_paths:
-    - "/proc"
-    - "/sys"
-  exclude_extensions:
-    - "log"
-    - "txt"
-  max_file_size: 104857600  # 100MB
-
-performance:
-  thread_pool_size: 4        # 线程数，建议设置为CPU核心数
-  cpu_usage_limit: 70.0     # CPU使用率限制（%）
-  memory_limit_mb: 200      # 内存限制（MB）
-  scan_buffer_size: 8192    # 扫描缓冲区大小（字节）
-
-security:
-  run_as_user: null         # 运行用户，null表示当前用户
-  database_encryption: true # 是否加密病毒库
-  audit_log_enabled: true   # 是否启用审计日志
-  quarantine_dir: "/var/lib/virus-scanner/quarantine"
-
-logging:
-  level: "INFO"             # 日志级别: DEBUG, INFO, WARN, ERROR
-  log_dir: "/var/log/virus-scanner"
-  max_size_mb: 50           # 单个日志文件最大大小
-  max_files: 10             # 保留的日志文件数量
-  remote_logging: null      # 远程日志配置
-
-update:
-  enabled: true
-  schedule:
-    frequency: "daily"      # 更新频率: hourly, daily, weekly
-    time: "03:00"           # 更新时间（24小时制）
-    day_of_week: null       # 每周更新的星期几（0-6，0=周日）
-  mirror_url: "https://database.clamav.net"
-  verify_signatures: true   # 是否验证病毒库签名
-
-monitor:
-  enabled: false
-  watch_paths:
-    - "/tmp"
-    - "/var/tmp"
-  events:
-    - "create"
-    - "modify"
-  actions:
-    on_create: "quarantine"
-    on_modify: "scan"
-    on_delete: "log"
-    auto_quarantine: false
-
-report:
-  enabled: true
-  format: "json"            # 默认报告格式
-  output_dir: "/var/lib/virus-scanner/reports"
-  include_details: true
-```
-
-### 配置项说明
-
-#### 扫描模式配置 (scan_modes)
-
-- **quick_scan_paths**: 快速扫描的默认路径
-- **exclude_paths**: 扫描时排除的路径
-- **exclude_extensions**: 扫描时排除的文件扩展名
-- **max_file_size**: 扫描的最大文件大小（字节）
-
-#### 性能配置 (performance)
-
-- **thread_pool_size**: 扫描线程池大小，建议设置为CPU核心数
-- **cpu_usage_limit**: CPU使用率上限，防止扫描影响系统性能
-- **memory_limit_mb**: 内存使用上限（MB）
-- **scan_buffer_size**: 文件读取缓冲区大小
-
-#### 安全配置 (security)
-
-- **run_as_user**: 指定运行用户，null表示当前用户
-- **database_encryption**: 是否加密病毒库数据库
-- **audit_log_enabled**: 是否启用审计日志
-- **quarantine_dir**: 隔离文件存储目录
-
-### 轻量级配置示例
-
-对于资源受限的小型系统（1GB内存、1CPU），推荐使用以下配置：
-
-```yaml
-scan_modes:
-  quick_scan_paths:
-    - "/bin"
-    - "/usr/bin"
-    - "/etc"
-  exclude_paths:
-    - "/proc"
-    - "/sys"
-    - "/dev"
-    - "/run"
-    - "/var/log"
-  exclude_extensions:
-    - "log"
-    - "txt"
-    - "tmp"
-    - "cache"
-    - "pid"
-  max_file_size: 52428800  # 50MB
-
-performance:
-  thread_pool_size: 1       # 单线程扫描
-  cpu_usage_limit: 50.0     # CPU使用率限制为50%
-  memory_limit_mb: 64       # 内存限制为64MB
-  scan_buffer_size: 4096   # 较小的缓冲区
-
-security:
-  run_as_user: null
-  database_encryption: false # 禁用加密以节省资源
-  audit_log_enabled: false   # 禁用审计日志
-  quarantine_dir: "/var/lib/virus-scanner/quarantine"
-
-logging:
-  level: "WARN"             # 仅记录警告和错误
-  log_dir: "/var/log/virus-scanner"
-  max_size_mb: 10           # 减小日志文件大小
-  max_files: 3              # 减少保留的日志文件数量
-  remote_logging: null
-
-update:
-  enabled: true
-  schedule:
-    frequency: "weekly"     # 降低更新频率
-    time: "03:00"
-    day_of_week: 0          # 每周日更新
-  mirror_url: "https://database.clamav.net"
-  verify_signatures: false  # 禁用签名验证以节省资源
-
-monitor:
-  enabled: false            # 默认禁用监控
-  watch_paths:
-    - "/tmp"
-  events:
-    - "create"
-  actions:
-    on_create: "log"
-    on_modify: "log"
-    on_delete: "log"
-    auto_quarantine: false
-
-report:
-  enabled: true
-  format: "text"            # 使用简单的文本格式
-  output_dir: "/var/lib/virus-scanner/reports"
-  include_details: false    # 减少报告详细信息
-```
-
-**轻量级配置说明**：
-- 线程数设置为1，避免多线程开销
-- CPU使用率限制为50%，确保系统响应
-- 内存限制为64MB，适应小内存系统
-- 禁用数据库加密和审计日志，减少CPU和内存消耗
-- 日志级别设置为WARN，减少I/O操作
-- 降低病毒库更新频率，减少网络和CPU使用
-- 禁用文件监控（默认），仅在需要时启用
-- 使用简单的文本报告格式，减少处理开销
-
-#### 日志配置 (logging)
-
-- **level**: 日志级别，可选值: DEBUG, INFO, WARN, ERROR
-- **log_dir**: 日志文件存储目录
-- **max_size_mb**: 单个日志文件最大大小（MB）
-- **max_files**: 保留的日志文件数量
-- **remote_logging**: 远程日志服务器配置
-
-#### 更新配置 (update)
-
-- **enabled**: 是否启用病毒库自动更新
-- **schedule**: 定时更新配置
-  - **frequency**: 更新频率（hourly, daily, weekly）
-  - **time**: 更新时间（24小时制）
-  - **day_of_week**: 每周更新的星期几（0-6）
-- **mirror_url**: ClamAV镜像服务器URL
-- **verify_signatures**: 是否验证病毒库签名
-
-#### 监控配置 (monitor)
-
-- **enabled**: 是否启用文件监控
-- **watch_paths**: 监控的路径列表
-- **events**: 监控的事件类型（create, modify, delete）
-- **actions**: 事件触发时的动作
-  - **on_create**: 文件创建时的动作
-  - **on_modify**: 文件修改时的动作
-  - **on_delete**: 文件删除时的动作
-  - **auto_quarantine**: 是否自动隔离威胁文件
-
-#### 报告配置 (report)
-
-- **enabled**: 是否启用报告生成
-- **format**: 默认报告格式（json, yaml, html, text）
-- **output_dir**: 报告输出目录
-- **include_details**: 是否包含详细信息
-
----
-
-## 命令行使用
-
-### 基本语法
+### 步骤三：下载病毒库
 
 ```bash
-virus-scanner [全局选项] <子命令> [子命令选项]
+./update_clamav_db.sh
 ```
 
-### 全局选项
+首次下载约需 200MB 流量，耗时取决于网络状况。
 
-- `-c, --config <路径>`: 指定配置文件路径
-- `-v, --verbose`: 显示详细输出
-- `-h, --help`: 显示帮助信息
-- `--version`: 显示版本信息
-
-### 子命令
-
-#### 1. 扫描命令 (scan)
-
-执行病毒扫描，支持多种扫描模式。
-
-**基本用法:**
+### 步骤四：执行扫描
 
 ```bash
-virus-scanner scan [选项]
+# 扫描单个文件
+./run_scanner.sh /path/to/file
+
+# 递归扫描目录
+./run_scanner.sh -r /path/to/directory
+
+# 扫描并显示详细信息
+./run_scanner.sh -v -r /path/to/directory
 ```
 
-**选项:**
+## 详细使用方法
 
-- `-t, --scan-type <类型>`: 扫描类型
-  - `quick`: 快速扫描（系统关键路径）
-  - `full`: 全盘扫描
-  - `custom`: 自定义路径扫描
-- `-p, --paths <路径>`: 指定扫描路径（可多次使用）
-- `-e, --exclude <路径>`: 排除路径（可多次使用）
-- `--threads <数量>`: 指定线程数
-- `--report`: 生成扫描报告
-- `-f, --format <格式>`: 报告格式（json, yaml, html, text）
+### 编译安装脚本 (build_clamav_local.sh)
 
-**示例:**
+编译并安装 ClamAV 到项目本地目录。
+
+**基本用法：**
 
 ```bash
-# 快速扫描系统关键路径
-virus-scanner scan --scan-type quick
-
-# 全盘扫描
-virus-scanner scan --scan-type full
-
-# 扫描指定目录
-virus-scanner scan --scan-type custom --paths /home/user/documents --paths /tmp
-
-# 扫描并生成JSON报告
-virus-scanner scan --scan-type quick --report --format json
-
-# 使用4个线程扫描，排除某些路径
-virus-scanner scan --scan-type custom --paths /home/user --exclude /home/user/.cache --threads 4
-
-# 显示详细输出
-virus-scanner -v scan --scan-type full
+./build_clamav_local.sh
 ```
 
-#### 2. 更新命令 (update)
+**执行步骤：**
 
-更新ClamAV病毒库。
+1. **检查系统依赖** - 验证 CMake、编译器等是否可用
+2. **创建目录结构** - 创建 `local/` 及其子目录
+3. **配置 CMake** - 生成编译配置，使用 `CMAKE_INSTALL_PREFIX` 指定本地路径
+4. **编译** - 使用多核并行编译
+5. **安装** - 将编译产物复制到 `local/` 目录
+6. **验证** - 检查关键文件是否存在
 
-**基本用法:**
+**输出示例：**
+
+```
+========================================
+  ClamAV 本地编译安装脚本
+========================================
+
+项目根目录: /path/to/project
+安装目录: /path/to/project/local
+构建目录: /path/to/project/build
+
+[1/6] 检查系统依赖...
+✓ 所有依赖已安装
+
+[2/6] 创建本地目录结构...
+✓ 目录创建完成
+
+[3/6] 配置 CMake...
+✓ CMake 配置完成
+
+[4/6] 编译 ClamAV...
+✓ 编译完成 (耗时: 5分32秒)
+
+[5/6] 安装到 local/ 目录...
+✓ 安装完成
+
+[6/6] 验证安装...
+✓ clamscan: /path/to/project/local/bin/clamscan
+✓ freshclam: /path/to/project/local/bin/freshclam
+✓ libclamav: /path/to/project/local/lib/libclamav.so
+
+✓ ClamAV 安装完成！
+```
+
+### 环境变量脚本 (clamav_env.sh)
+
+设置项目隔离的环境变量。此脚本仅修改当前 Shell 的环境变量，不会影响系统全局配置。
+
+**使用方法：**
 
 ```bash
-virus-scanner update [选项]
+# 方法一：source 命令加载
+source clamav_env.sh
+
+# 方法二：直接在当前 Shell 中执行
+. clamav_env.sh
 ```
 
-**选项:**
-
-- `-f, --force`: 强制更新
-- `--schedule`: 启用定时更新
-- `--check-only`: 仅检查更新
-
-**示例:**
+**验证环境变量：**
 
 ```bash
-# 检查是否有新版本
-virus-scanner update --check-only
+# 检查 ClamAV 是否可用
+clamscan --version
 
-# 强制更新病毒库
-virus-scanner update --force
+# 检查病毒库目录
+echo $CLAMAV_DATABASE_DIR
 
-# 启用定时更新
-virus-scanner update --schedule
-
-# 强制更新并启用定时更新
-virus-scanner update --force --schedule
+# 检查库路径
+echo $LD_LIBRARY_PATH
 ```
 
-#### 3. 监控命令 (monitor)
-
-启动或停止文件监控。
-
-**基本用法:**
+**在脚本中引用：**
 
 ```bash
-virus-scanner monitor [选项]
+#!/bin/bash
+source clamav_env.sh
+
+# 现在可以直接使用 clamscan
+clamscan /path/to/scan
 ```
 
-**选项:**
+### 病毒库更新脚本 (update_clamav_db.sh)
 
-- `-s, --start`: 启动监控
-- `-p, --stop`: 停止监控
-- `--watch <路径>`: 监控路径（可多次使用）
+下载或更新 ClamAV 病毒库。
 
-**示例:**
+**基本用法：**
 
 ```bash
-# 启动文件监控（使用配置文件中的路径）
-virus-scanner monitor --start
-
-# 停止文件监控
-virus-scanner monitor --stop
-
-# 启动监控并指定路径
-virus-scanner monitor --start --watch /tmp --watch /var/tmp
+./update_clamav_db.sh
 ```
 
-#### 4. 报告命令 (report)
+**工作流程：**
 
-生成或转换扫描报告。
+1. 加载环境变量
+2. 创建 `database/` 和日志目录
+3. 生成临时 freshclam 配置文件
+4. 执行病毒库下载
+5. 清理临时文件
 
-**基本用法:**
+**输出示例：**
+
+```
+========================================
+  ClamAV 病毒库更新
+========================================
+
+数据库目录: /path/to/project/database
+
+开始下载病毒库...
+ClamAV update process started at Thu Jan  9 10:00:00 2025
+Downloading main.cvd [100%]
+main.cvd updated (version: 268, sigs: 2547215)
+Downloading daily.cvd [100%]
+daily.cvd updated (version: 28687, sigs: 4237891)
+Downloading bytecode.cvd [100%]
+bytecode.cvd updated (version: 334, sigs: 70)
+
+Database updated successfully!
+
+✓ 病毒库更新完成
+病毒库位置: /path/to/project/database
+-rw-r--r--  1 user  staff   150M Jan  9 10:05 main.cvd
+-rw-r--r--  1 user  staff    18M Jan  9 10:05 daily.cvd
+-rw-r--r--  1 user  staff   500K Jan  9 10:05 bytecode.cvd
+```
+
+**手动更新：**
 
 ```bash
-virus-scanner report [选项]
+# 强制更新（即使没有新版本也重新下载）
+./update_clamav_db.sh --force
 ```
 
-**选项:**
+### 扫描运行脚本 (run_scanner.sh)
 
-- `-i, --input <文件>`: 输入报告文件
-- `-f, --format <格式>`: 报告格式（json, yaml, html, text）
-- `-o, --output <文件>`: 输出报告文件
+执行病毒扫描，支持多种扫描模式和选项。
 
-**示例:**
+**基本语法：**
 
 ```bash
-# 将JSON报告转换为HTML格式
-virus-scanner report --input report.json --format html --output report.html
-
-# 将JSON报告转换为文本格式
-virus-scanner report --input report.json --format text --output report.txt
-
-# 将YAML报告转换为JSON格式
-virus-scanner report --input report.yaml --format json --output report.json
+./run_scanner.sh [选项] <扫描路径>
 ```
 
-#### 5. 状态命令 (status)
+**命令选项：**
 
-查看系统状态和病毒库信息。
+| 短选项 | 长选项 | 说明 | 示例 |
+|--------|--------|------|------|
+| `-h` | `--help` | 显示帮助信息 | `./run_scanner.sh --help` |
+| `-r` | `--recursive` | 递归扫描目录 | `./run_scanner.sh -r /path` |
+| `-v` | `--verbose` | 显示详细信息 | `./run_scanner.sh -v /path` |
+| 无 | `--move=<目录>` | 移动感染文件到指定目录 | `./run_scanner.sh --move=./infected /path` |
+| 无 | `--copy=<目录>` | 复制感染文件到指定目录 | `./run_scanner.sh --copy=./quarantine /path` |
+| 无 | `--exclude=<模式>` | 排除匹配的文件 | `./run_scanner.sh --exclude="*.tmp" /path` |
+| 无 | `--exclude-dir=<模式>` | 排除匹配的目录 | `./run_scanner.sh --exclude-dir=".git" /path` |
 
-**基本用法:**
+**使用示例：**
 
 ```bash
-virus-scanner status [选项]
+# 扫描单个文件
+./run_scanner.sh /path/to/file.txt
+
+# 递归扫描整个目录
+./run_scanner.sh -r /path/to/directory
+
+# 扫描并显示详细信息
+./run_scanner.sh -v -r /path/to/directory
+
+# 排除特定文件类型
+./run_scanner.sh -r --exclude="*.log" --exclude="*.tmp" /path
+
+# 排除特定目录
+./run_scanner.sh -r --exclude-dir=".git" --exclude-dir="node_modules" /path
+
+# 扫描并隔离感染文件
+./run_scanner.sh -r --move=./infected /path
+
+# 组合使用多个选项
+./run_scanner.sh -v -r --exclude="*.log" --exclude-dir=".git" /path
 ```
 
-**选项:**
+**扫描输出示例：**
 
-- `-d, --database`: 显示病毒库信息
-- `-s, --system`: 显示系统信息
+```
+========================================
+  ClamAV 病毒扫描
+========================================
 
-**示例:**
+扫描路径: /path/to/scan
+病毒库: /path/to/project/database
+
+/path/to/scan/clean.txt: OK
+/path/to/scan/eicar.com: Eicar-Test-File FOUND
+/path/to/scan/subdir/test.exe: OK
+
+----------- SCAN SUMMARY -----------
+Known viruses: 6781234
+Engine version: 1.0.3
+Scanned directories: 3
+Scanned files: 15
+Infected files: 1
+Data scanned: 1.50 MB
+Data read: 2.00 MB (ratio 0.75)
+Time: 0.123 sec (0 m 0 s)
+```
+
+**扫描结果说明：**
+
+| 字段 | 说明 |
+|------|------|
+| Known viruses | 病毒库中的病毒特征码数量 |
+| Engine version | ClamAV 引擎版本 |
+| Scanned directories | 扫描的目录数量 |
+| Scanned files | 扫描的文件数量 |
+| Infected files | 发现感染的文件数量 |
+| Data scanned | 扫描的数据量 |
+| Data read | 读取的数据量 |
+| Time | 扫描耗时 |
+
+## 高级配置
+
+### 自定义病毒库位置
+
+默认情况下，病毒库存储在 `database/` 目录。如需修改，可在 `update_clamav_db.sh` 中调整：
 
 ```bash
-# 查看病毒库信息
-virus-scanner status --database
-
-# 查看系统信息
-virus-scanner status --system
-
-# 查看所有信息
-virus-scanner status --database --system
+# 修改此行
+DATABASE_DIR="${SCRIPT_DIR}/your-custom-directory"
 ```
 
----
+### 自定义日志位置
 
-## 功能详解
-
-### 病毒扫描引擎
-
-#### 扫描模式
-
-1. **快速扫描 (Quick Scan)**
-   - 扫描系统关键路径
-   - 默认路径: /bin, /sbin, /usr/bin, /etc, /usr/sbin
-   - 扫描速度快，适合日常检查
-
-2. **全盘扫描 (Full Scan)**
-   - 扫描整个文件系统
-   - 扫描全面，但耗时较长
-   - 建议在系统空闲时执行
-
-3. **自定义扫描 (Custom Scan)**
-   - 扫描用户指定的路径
-   - 灵活性高，适合特定需求
-
-#### 扫描性能
-
-- **扫描速度**: 不低于50MB/s
-- **内存占用**: 峰值不超过200MB
-- **并发处理**: 支持多线程并发扫描
-- **智能调度**: 根据系统负载动态调整资源使用
-
-#### 扫描结果
-
-扫描完成后会显示以下信息：
-- 扫描文件数
-- 发现威胁数
-- 扫描耗时
-- 扫描速度
-
-### 实时文件监控
-
-#### 监控功能
-
-- **文件创建监控**: 检测新创建的文件
-- **文件修改监控**: 检测文件内容变化
-- **文件删除监控**: 记录文件删除操作
-
-#### 监控动作
-
-- **quarantine**: 自动隔离威胁文件
-- **scan**: 扫描文件
-- **log**: 记录事件到日志
-
-#### 使用场景
-
-- 监控临时文件目录（/tmp, /var/tmp）
-- 监控下载目录
-- 监控用户上传目录
-
-### 病毒库更新
-
-#### ClamAV病毒库
-
-工具使用ClamAV的病毒特征码库，包含三个主要文件：
-
-1. **main.cvd**: 主病毒库
-   - 包含主要病毒特征码
-   - 文件大小约150MB
-   - 更新频率较低
-
-2. **daily.cvd**: 每日更新
-   - 包含最新病毒特征码
-   - 文件大小约10-20MB
-   - 每日更新
-
-3. **bytecode.cvd**: 字节码库
-   - 包含高级检测规则
-   - 文件大小较小
-   - 不定期更新
-
-#### 更新机制
-
-1. **手动更新**
-   - 使用 `virus-scanner update --force` 命令
-   - 立即下载并安装最新病毒库
-
-2. **自动更新**
-   - 使用 `virus-scanner update --schedule` 启用
-   - 根据配置的时间自动更新
-   - 支持hourly、daily、weekly频率
-
-3. **检查更新**
-   - 使用 `virus-scanner update --check-only` 命令
-   - 仅检查是否有新版本，不下载
-
-#### 更新流程
-
-1. 检查当前版本
-2. 下载最新病毒库文件
-3. 备份当前病毒库
-4. 安装新病毒库
-5. 验证病毒库完整性
-6. 更新版本信息
-
-#### 备份与恢复
-
-- 更新前自动备份当前病毒库
-- 备份文件保存在 `/var/lib/virus-scanner/backups`
-- 支持版本回滚
-
-### 报告生成
-
-#### 报告格式
-
-1. **JSON格式**
-   - 机器可读
-   - 适合程序处理
-   - 支持数据交换
-
-2. **YAML格式**
-   - 人类可读
-   - 适合配置管理
-   - 结构清晰
-
-3. **HTML格式**
-   - 网页显示
-   - 适合浏览器查看
-   - 包含样式和格式
-
-4. **TEXT格式**
-   - 纯文本
-   - 适合命令行查看
-   - 便于日志分析
-
-#### 报告内容
-
-- 扫描概要信息
-- 扫描统计
-- 威胁详情
-- 受影响文件列表
-- 处理建议
-- 扫描时间戳
-
-### 日志系统
-
-#### 日志级别
-
-- **DEBUG**: 调试信息
-- **INFO**: 一般信息
-- **WARN**: 警告信息
-- **ERROR**: 错误信息
-
-#### 日志功能
-
-- **本地日志**: 保存到本地文件
-- **日志轮转**: 自动轮转日志文件
-- **远程日志**: 支持发送到远程服务器
-- **审计日志**: 记录重要操作
-
-#### 日志位置
-
-- 日志目录: `/var/log/virus-scanner`
-- 主日志文件: `virus-scanner.log`
-- 审计日志文件: `audit.log`
-
----
-
-## API接口
-
-### 启动API服务
+日志默认保存在 `local/var/log/clamav/` 目录。如需修改：
 
 ```bash
-# 使用默认端口启动
-virus-scanner api
-
-# 指定端口启动
-virus-scanner api --port 8080
-
-# 指定绑定地址
-virus-scanner api --host 0.0.0.0 --port 8080
+# 在 update_clamav_db.sh 中修改
+LOG_DIR="/your/custom/log/path"
 ```
 
-### API端点
+### 批量扫描脚本示例
 
-#### 1. 扫描API
+创建 `batch_scan.sh` 进行定时扫描：
 
-**启动扫描**
-
-```http
-POST /api/v1/scan
-Content-Type: application/json
-
-{
-  "scan_type": "quick",
-  "paths": ["/home/user"],
-  "exclude_paths": ["/home/user/.cache"],
-  "threads": 4
-}
-```
-
-**响应:**
-
-```json
-{
-  "scan_id": "scan_123456",
-  "status": "running",
-  "started_at": "2024-01-08T10:00:00Z"
-}
-```
-
-**查询扫描状态**
-
-```http
-GET /api/v1/scan/{scan_id}
-```
-
-**响应:**
-
-```json
-{
-  "scan_id": "scan_123456",
-  "status": "completed",
-  "started_at": "2024-01-08T10:00:00Z",
-  "completed_at": "2024-01-08T10:05:00Z",
-  "files_scanned": 10000,
-  "threats_found": 5,
-  "duration_seconds": 300
-}
-```
-
-#### 2. 病毒库API
-
-**检查更新**
-
-```http
-GET /api/v1/database/check-update
-```
-
-**响应:**
-
-```json
-{
-  "current_version": "1.0.0",
-  "latest_version": "1.0.1",
-  "update_available": true
-}
-```
-
-**执行更新**
-
-```http
-POST /api/v1/database/update
-Content-Type: application/json
-
-{
-  "force": true
-}
-```
-
-**响应:**
-
-```json
-{
-  "status": "success",
-  "version": "1.0.1",
-  "timestamp": "2024-01-08T10:00:00Z",
-  "signatures_added": 1000,
-  "signatures_removed": 50,
-  "total_signatures": 500000
-}
-```
-
-**获取病毒库信息**
-
-```http
-GET /api/v1/database/info
-```
-
-**响应:**
-
-```json
-{
-  "version": "1.0.0",
-  "signature_count": 500000,
-  "last_update": "2024-01-08T10:00:00Z",
-  "memory_usage_mb": 150
-}
-```
-
-#### 3. 监控API
-
-**启动监控**
-
-```http
-POST /api/v1/monitor/start
-Content-Type: application/json
-
-{
-  "paths": ["/tmp", "/var/tmp"],
-  "events": ["create", "modify"]
-}
-```
-
-**响应:**
-
-```json
-{
-  "status": "running",
-  "monitor_id": "monitor_123456",
-  "started_at": "2024-01-08T10:00:00Z"
-}
-```
-
-**停止监控**
-
-```http
-POST /api/v1/monitor/stop
-```
-
-**响应:**
-
-```json
-{
-  "status": "stopped",
-  "stopped_at": "2024-01-08T10:05:00Z"
-}
-```
-
-**获取监控事件**
-
-```http
-GET /api/v1/monitor/events?limit=100&offset=0
-```
-
-**响应:**
-
-```json
-{
-  "events": [
-    {
-      "event_type": "create",
-      "file_path": "/tmp/test.txt",
-      "timestamp": "2024-01-08T10:00:00Z",
-      "threat_detected": false
-    }
-  ],
-  "total": 100,
-  "limit": 100,
-  "offset": 0
-}
-```
-
-#### 4. 报告API
-
-**生成报告**
-
-```http
-POST /api/v1/report/generate
-Content-Type: application/json
-
-{
-  "scan_id": "scan_123456",
-  "format": "html"
-}
-```
-
-**响应:**
-
-```json
-{
-  "report_id": "report_123456",
-  "status": "generated",
-  "file_path": "/var/lib/virus-scanner/reports/report_123456.html",
-  "generated_at": "2024-01-08T10:00:00Z"
-}
-```
-
-**下载报告**
-
-```http
-GET /api/v1/report/{report_id}/download
-```
-
-#### 5. 系统状态API
-
-**获取系统状态**
-
-```http
-GET /api/v1/status
-```
-
-**响应:**
-
-```json
-{
-  "version": "1.0.0",
-  "uptime_seconds": 3600,
-  "database": {
-    "version": "1.0.0",
-    "signature_count": 500000,
-    "last_update": "2024-01-08T10:00:00Z"
-  },
-  "system": {
-    "cpu_usage": 45.5,
-    "memory_usage_mb": 150,
-    "active_scans": 1,
-    "active_monitors": 0
-  }
-}
-```
-
-### API认证
-
-API支持多种认证方式：
-
-1. **API Key认证**
-
-```http
-GET /api/v1/status
-X-API-Key: your-api-key-here
-```
-
-2. **JWT Token认证**
-
-```http
-GET /api/v1/status
-Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
-```
-
-### 错误响应
-
-所有API端点在出错时返回统一的错误格式：
-
-```json
-{
-  "error": {
-    "code": "INVALID_REQUEST",
-    "message": "Invalid scan type specified",
-    "details": {
-      "field": "scan_type",
-      "value": "invalid"
-    }
-  }
-}
-```
-
-常见错误代码：
-- `INVALID_REQUEST`: 请求参数无效
-- `UNAUTHORIZED`: 未授权访问
-- `NOT_FOUND`: 资源不存在
-- `INTERNAL_ERROR`: 服务器内部错误
-- `SCAN_IN_PROGRESS`: 扫描正在进行中
-- `UPDATE_IN_PROGRESS`: 更新正在进行中
-
----
-
-## 故障排除
-
-### 常见问题
-
-#### 1. 编译错误
-
-**问题**: 编译时出现依赖错误
-
-**解决方案**:
 ```bash
-# 更新Rust工具链
-rustup update
+#!/bin/bash
 
-# 清理并重新编译
-cargo clean
-cargo build --release
+# 批量扫描脚本
+# 用法: ./batch_scan.sh /path/to/scan1 /path/to/scan2 ...
 
-# 如果缺少系统依赖，安装必要的库
-sudo apt-get install libssl-dev pkg-config
+source clamav_env.sh
+
+REPORT_DIR="./reports"
+mkdir -p "$REPORT_DIR"
+TIMESTAMP=$(date +%Y%m%d_%H%M%S)
+
+for path in "$@"; do
+    echo "扫描: $path"
+    ./run_scanner.sh -r "$path" > "$REPORT_DIR/scan_${TIMESTAMP}_$(basename "$path").txt" 2>&1
+done
+
+echo "扫描完成，报告保存在: $REPORT_DIR"
 ```
 
-#### 2. 权限错误
+### 定时更新病毒库
 
-**问题**: 运行时出现权限不足错误
+使用 cron 定时更新病毒库：
 
-**解决方案**:
 ```bash
-# 使用sudo运行（不推荐）
-sudo virus-scanner scan --scan-type full
+# 编辑 crontab
+crontab -e
 
-# 或者为当前用户设置适当的权限
-sudo chown -R $USER:$USER /var/lib/virus-scanner
-sudo chown -R $USER:$USER /var/log/virus-scanner
+# 添加每日凌晨 3 点自动更新
+0 3 * * * cd /path/to/project && ./update_clamav_db.sh >> /path/to/project/logs/update.log 2>&1
 ```
 
-#### 3. 病毒库更新失败
+## 隔离性验证
 
-**问题**: 病毒库更新失败，提示网络错误
+本项目实现了完整的项目隔离，确保不会影响系统环境：
 
-**解决方案**:
+| 验证项 | 实现方式 | 状态 |
+|--------|----------|------|
+| 安装路径隔离 | 使用 `CMAKE_INSTALL_PREFIX` 指定 `local/` 目录 | ✓ |
+| 环境变量隔离 | 通过 `source` 加载，仅当前 Shell 生效 | ✓ |
+| 库路径隔离 | 使用 `LD_LIBRARY_PATH` 指定 `local/lib` | ✓ |
+| 病毒库隔离 | 存储在 `database/` 目录 | ✓ |
+| 配置隔离 | 使用本地临时配置文件 | ✓ |
+| 日志隔离 | 保存在 `local/var/log/` 目录 | ✓ |
+
+**验证测试：**
+
 ```bash
-# 检查网络连接
+# 1. 加载环境变量前
+echo $PATH | grep -q "local/bin" && echo "已污染" || echo "干净"
+
+# 2. 加载环境变量后
+source clamav_env.sh
+echo $PATH | grep -q "local/bin" && echo "已隔离" || echo "错误"
+
+# 3. 新开终端验证
+# (新终端不会自动加载环境变量，保持干净)
+```
+
+## 常见问题
+
+### 编译相关
+
+**Q：CMake 配置失败，提示找不到编译器**
+
+A：请确保已安装 build-essential 或 Xcode 命令行工具：
+
+```bash
+# Ubuntu/Debian
+sudo apt-get install build-essential
+
+# macOS
+xcode-select --install
+```
+
+**Q：编译过程中内存不足**
+
+A：减少并行编译的线程数：
+
+```bash
+# 在 build_clamav_local.sh 中修改
+make -j2  # 使用 2 个并行作业
+```
+
+**Q：编译时间过长**
+
+A：首次编译需要较长时间（约 10-30 分钟），取决于硬件性能。可以使用以下命令查看进度：
+
+```bash
+# 在 build_clamav_local.sh 中临时添加
+make VERBOSE=1
+```
+
+### 病毒库相关
+
+**Q：病毒库下载失败**
+
+A：可能的原因：
+1. 网络连接问题
+2. 防火墙阻止访问 ClamAV 服务器
+3. DNS 解析问题
+
+解决方案：
+
+```bash
+# 检查网络
 ping database.clamav.net
 
-# 尝试使用其他镜像服务器
-# 编辑配置文件，修改mirror_url
-vim /etc/virus-scanner/config.yaml
-
-# 检查磁盘空间
-df -h
-
-# 检查防火墙设置
-sudo ufw status
+# 手动下载
+cd database
+curl -O https://database.clamav.net/main.cvd
+curl -O https://database.clamav.net/daily.cvd
+curl -O https://database.clamav.net/bytecode.cvd
 ```
 
-#### 4. 扫描速度慢
+**Q：病毒库更新后扫描找不到病毒**
 
-**问题**: 扫描速度低于预期
-
-**解决方案**:
-```bash
-# 增加线程数
-virus-scanner scan --scan-type full --threads 8
-
-# 检查系统负载
-top
-
-# 调整性能配置
-vim /etc/virus-scanner/config.yaml
-# 修改 thread_pool_size 和 cpu_usage_limit
-```
-
-#### 5. 内存占用过高
-
-**问题**: 扫描时内存占用超过限制
-
-**解决方案**:
-```bash
-# 减少线程数
-virus-scanner scan --scan-type full --threads 2
-
-# 调整内存限制
-vim /etc/virus-scanner/config.yaml
-# 修改 memory_limit_mb
-
-# 排除大文件
-virus-scanner scan --scan-type custom --paths /home/user --exclude /home/user/large-files
-```
-
-#### 6. 文件监控不工作
-
-**问题**: 文件监控无法启动或没有响应
-
-**解决方案**:
-```bash
-# 检查inotify限制
-cat /proc/sys/fs/inotify/max_user_watches
-
-# 增加inotify限制
-echo 819200 | sudo tee /proc/sys/fs/inotify/max_user_watches
-
-# 检查监控路径是否存在
-ls -la /tmp
-
-# 查看日志
-tail -f /var/log/virus-scanner/virus-scanner.log
-```
-
-#### 7. 日志文件过大
-
-**问题**: 日志文件占用过多磁盘空间
-
-**解决方案**:
-```bash
-# 查看日志文件大小
-du -sh /var/log/virus-scanner
-
-# 清理旧日志
-find /var/log/virus-scanner -name "*.log.*" -mtime +7 -delete
-
-# 调整日志配置
-vim /etc/virus-scanner/config.yaml
-# 修改 max_size_mb 和 max_files
-```
-
-### 日志分析
-
-#### 查看日志
+A：请检查病毒库目录是否正确：
 
 ```bash
-# 查看最新日志
-tail -f /var/log/virus-scanner/virus-scanner.log
-
-# 查看错误日志
-grep ERROR /var/log/virus-scanner/virus-scanner.log
-
-# 查看特定时间的日志
-grep "2024-01-08" /var/log/virus-scanner/virus-scanner.log
+source clamav_env.sh
+ls -lh $CLAMAV_DATABASE_DIR
 ```
 
-#### 常见日志信息
+**Q：病毒库文件损坏**
 
-- **INFO**: 正常操作信息
-- **WARN**: 警告信息，不影响功能
-- **ERROR**: 错误信息，需要处理
-
-### 性能调优
-
-#### 系统级优化
+A：删除损坏的文件后重新下载：
 
 ```bash
-# 增加文件描述符限制
-ulimit -n 65536
-
-# 优化I/O调度
-echo deadline | sudo tee /sys/block/sda/queue/scheduler
-
-# 禁用swap（如果有足够内存）
-sudo swapoff -a
+rm -rf database/*
+./update_clamav_db.sh
 ```
 
-#### 应用级优化
+### 扫描相关
+
+**Q：扫描速度慢**
+
+A：可以尝试以下优化：
+1. 使用 `--exclude` 排除大文件或不需要扫描的文件
+2. 使用 `--exclude-dir` 排除不需要扫描的目录
+3. 限制最大扫描文件大小
 
 ```bash
-# 调整线程池大小
-vim /etc/virus-scanner/config.yaml
-# 设置 thread_pool_size 为CPU核心数
-
-# 调整缓冲区大小
-# 设置 scan_buffer_size 为更大的值
-
-# 启用数据库加密（如果安全性更重要）
-# 设置 database_encryption 为 true
+# 示例：排除常见的大文件目录
+./run_scanner.sh -r --exclude="*.zip" --exclude="*.gz" --exclude-dir="node_modules" /path
 ```
 
----
+**Q：clamscan: error while loading shared libraries**
 
-## 最佳实践
-
-### 日常使用
-
-#### 1. 定期扫描
+A：库路径未正确设置，请确保已加载环境变量：
 
 ```bash
-# 每日快速扫描
-0 2 * * * /usr/local/bin/virus-scanner scan --scan-type quick --report
-
-# 每周全盘扫描
-0 3 * * 0 /usr/local/bin/virus-scanner scan --scan-type full --report --format json
+source clamav_env.sh
 ```
 
-#### 2. 定期更新病毒库
+**Q：扫描结果显示 "unknown option"**
+
+A：使用的是系统自带的 clamscan，而非项目本地版本：
 
 ```bash
-# 每日自动更新（凌晨3点）
-0 3 * * * /usr/local/bin/virus-scanner update --schedule
+# 确认使用的是本地版本
+which clamscan
+# 应显示: /path/to/project/local/bin/clamscan
+
+# 如不正确，请重新加载环境变量
+source clamav_env.sh
 ```
 
-#### 3. 监控关键目录
+## 注意事项
 
-```bash
-# 监控临时目录
-/usr/local/bin/virus-scanner monitor --start --watch /tmp --watch /var/tmp
-```
+1. **环境变量时效性**：每次新开终端都需要重新执行 `source clamav_env.sh`
 
-### 安全建议
+2. **磁盘空间**：病毒库首次下载需要约 200MB 空间
 
-#### 1. 使用专用用户
+3. **定期更新**：建议每周执行 `./update_clamav_db.sh` 更新病毒库
 
-```bash
-# 创建专用用户
-sudo useradd -r -s /bin/false virus-scanner
+4. **编译时间**：首次编译可能需要 10-30 分钟
 
-# 设置目录权限
-sudo chown -R virus-scanner:virus-scanner /var/lib/virus-scanner
-sudo chown -R virus-scanner:virus-scanner /var/log/virus-scanner
+5. **权限要求**：确保对 `local/` 和 `database/` 目录有读写权限
 
-# 使用专用用户运行
-sudo -u virus-scanner virus-scanner scan --scan-type quick
-```
+6. **系统兼容性**：本项目在 macOS 和 Linux 上测试通过
 
-#### 2. 启用审计日志
+## 相关资源
 
-```yaml
-# 在配置文件中启用审计日志
-security:
-  audit_log_enabled: true
-```
+- [ClamAV 官方网站](https://www.clamav.net/)
+- [ClamAV 文档](https://docs.clamav.net/)
+- [ClamAV 病毒库](https://database.clamav.net/)
 
-#### 3. 定期备份配置
+## 许可证
 
-```bash
-# 备份配置文件
-cp /etc/virus-scanner/config.yaml /etc/virus-scanner/config.yaml.backup
+本项目使用 MIT 许可证。
 
-# 备份病毒库
-cp -r /var/lib/virus-scanner/database /var/lib/virus-scanner/database.backup
-```
-
-### 性能优化
-
-#### 1. 合理配置线程数
-
-```yaml
-# 根据CPU核心数配置
-performance:
-  thread_pool_size: 4  # 设置为CPU核心数
-```
-
-#### 2. 排除不必要的路径
-
-```yaml
-# 排除系统目录和临时文件
-scan_modes:
-  exclude_paths:
-    - "/proc"
-    - "/sys"
-    - "/dev"
-    - "/run"
-  exclude_extensions:
-    - "log"
-    - "tmp"
-    - "cache"
-```
-
-#### 3. 使用快速扫描
-
-```bash
-# 日常检查使用快速扫描
-virus-scanner scan --scan-type quick
-
-# 深度检查使用全盘扫描
-virus-scanner scan --scan-type full
-```
-
-### 企业部署
-
-#### 1. 集中管理
-
-```bash
-# 使用配置管理工具（如Ansible）部署
-# 示例Ansible playbook
-- name: Deploy virus scanner
-  hosts: all
-  tasks:
-    - name: Copy configuration
-      copy:
-        src: config.yaml
-        dest: /etc/virus-scanner/config.yaml
-    - name: Start monitoring
-      command: virus-scanner monitor --start
-```
-
-#### 2. 日志集中化
-
-```yaml
-# 配置远程日志
-logging:
-  remote_logging:
-    endpoint: "https://log-server.example.com/api/logs"
-    use_tls: true
-    api_key: "your-api-key"
-```
-
-#### 3. API集成
-
-```bash
-# 启动API服务
-virus-scanner api --host 0.0.0.0 --port 8080
-
-# 使用API进行批量扫描
-curl -X POST http://localhost:8080/api/v1/scan \
-  -H "Content-Type: application/json" \
-  -H "X-API-Key: your-api-key" \
-  -d '{"scan_type": "quick"}'
-```
-
-### 监控和告警
-
-#### 1. 系统监控
-
-```bash
-# 监控扫描进程
-ps aux | grep virus-scanner
-
-# 监控资源使用
-top -p $(pgrep virus-scanner)
-
-# 监控日志
-tail -f /var/log/virus-scanner/virus-scanner.log
-```
-
-#### 2. 告警配置
-
-```bash
-# 配置邮件告警（需要额外工具）
-# 示例：使用logwatch
-apt-get install logwatch
-
-# 配置病毒发现告警
-grep "threat detected" /var/log/virus-scanner/virus-scanner.log | mail -s "Virus Detected" admin@example.com
-```
-
-### 故障恢复
-
-#### 1. 病毒库恢复
-
-```bash
-# 从备份恢复病毒库
-cp -r /var/lib/virus-scanner/backups/database_* /var/lib/virus-scanner/database
-
-# 重新下载病毒库
-virus-scanner update --force
-```
-
-#### 2. 配置恢复
-
-```bash
-# 从备份恢复配置
-cp /etc/virus-scanner/config.yaml.backup /etc/virus-scanner/config.yaml
-
-# 生成默认配置
-virus-scanner scan --help
-```
-
-#### 3. 服务重启
-
-```bash
-# 停止监控
-virus-scanner monitor --stop
-
-# 停止API服务
-pkill virus-scanner
-
-# 重新启动
-virus-scanner monitor --start
-virus-scanner api
-```
-
----
-
-## 附录
-
-### A. 配置文件完整示例
-
-```yaml
-scan_modes:
-  quick_scan_paths:
-    - "/bin"
-    - "/sbin"
-    - "/usr/bin"
-    - "/etc"
-    - "/usr/sbin"
-  exclude_paths:
-    - "/proc"
-    - "/sys"
-    - "/dev"
-    - "/run"
-  exclude_extensions:
-    - "log"
-    - "txt"
-    - "tmp"
-    - "cache"
-  max_file_size: 104857600
-
-performance:
-  thread_pool_size: 4
-  cpu_usage_limit: 70.0
-  memory_limit_mb: 200
-  scan_buffer_size: 8192
-
-security:
-  run_as_user: "virus-scanner"
-  database_encryption: true
-  audit_log_enabled: true
-  quarantine_dir: "/var/lib/virus-scanner/quarantine"
-
-logging:
-  level: "INFO"
-  log_dir: "/var/log/virus-scanner"
-  max_size_mb: 50
-  max_files: 10
-  remote_logging:
-    endpoint: "https://log-server.example.com/api/logs"
-    use_tls: true
-    api_key: "your-api-key"
-
-update:
-  enabled: true
-  schedule:
-    frequency: "daily"
-    time: "03:00"
-    day_of_week: null
-  mirror_url: "https://database.clamav.net"
-  verify_signatures: true
-
-monitor:
-  enabled: true
-  watch_paths:
-    - "/tmp"
-    - "/var/tmp"
-    - "/home/user/downloads"
-  events:
-    - "create"
-    - "modify"
-  actions:
-    on_create: "quarantine"
-    on_modify: "scan"
-    on_delete: "log"
-    auto_quarantine: false
-
-report:
-  enabled: true
-  format: "json"
-  output_dir: "/var/lib/virus-scanner/reports"
-  include_details: true
-```
-
-### B. 命令速查表
-
-| 命令 | 功能 | 示例 |
-|------|------|------|
-| `virus-scanner scan` | 执行病毒扫描 | `virus-scanner scan --scan-type quick` |
-| `virus-scanner update` | 更新病毒库 | `virus-scanner update --force` |
-| `virus-scanner monitor` | 文件监控 | `virus-scanner monitor --start` |
-| `virus-scanner report` | 生成报告 | `virus-scanner report --input report.json --format html` |
-| `virus-scanner status` | 查看状态 | `virus-scanner status --database` |
-
-### C. 常用路径
-
-| 路径 | 用途 |
-|------|------|
-| `/usr/local/bin/virus-scanner` | 可执行文件 |
-| `/etc/virus-scanner/config.yaml` | 配置文件 |
-| `/var/lib/virus-scanner/database` | 病毒库目录 |
-| `/var/lib/virus-scanner/backups` | 备份目录 |
-| `/var/lib/virus-scanner/quarantine` | 隔离目录 |
-| `/var/lib/virus-scanner/reports` | 报告目录 |
-| `/var/log/virus-scanner` | 日志目录 |
-
-### D. 支持的Linux发行版
-
-- Ubuntu 20.04, 22.04, 24.04
-- CentOS 7, 8, 9
-- Debian 10, 11, 12
-- Fedora 35+
-- Arch Linux
-- openSUSE Leap 15+
-
-### E. 技术支持
-
-- **项目主页**: [项目URL]
-- **问题反馈**: [Issues URL]
-- **文档**: [Documentation URL]
-- **邮件支持**: support@example.com
-
-### F. 许可证
-
-本项目采用 [MIT License](LICENSE) 许可证。
-
-### G. 更新日志
-
-#### 版本 1.0.0 (2024-01-08)
-
-- 初始版本发布
-- 支持快速扫描、全盘扫描、自定义扫描
-- 集成ClamAV病毒库
-- 实现实时文件监控
-- 支持病毒库自动更新
-- 提供RESTful API接口
-- 支持多种报告格式
-- 完善的日志系统
-- 中文命令行界面
-
----
-
-## 联系方式
-
-如有问题或建议，请通过以下方式联系我们：
-
-- 邮箱: support@example.com
-- 项目主页: https://github.com/your-org/virus-scanner
-- 文档: https://docs.example.com/virus-scanner
-
----
-
-*最后更新: 2024-01-08*
+ClamAV 使用 LGPL-2.1 许可证，详情请参阅 clamav/ 目录下的 LICENSE 文件。

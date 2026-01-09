@@ -18,6 +18,7 @@ PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CLAMAV_SOURCE_DIR="${PROJECT_ROOT}/clamav"
 LOCAL_INSTALL_DIR="${PROJECT_ROOT}/local"
 BUILD_DIR="${PROJECT_ROOT}/build"
+DATABASE_DIR="${PROJECT_ROOT}/database"
 
 # 日志函数
 log_info() {
@@ -113,11 +114,12 @@ create_local_dirs() {
     mkdir -p "${LOCAL_INSTALL_DIR}/include"
     mkdir -p "${LOCAL_INSTALL_DIR}/share"
     mkdir -p "${LOCAL_INSTALL_DIR}/etc"
-    mkdir -p "${LOCAL_INSTALL_DIR}/var/lib/clamav"
+    mkdir -p "${DATABASE_DIR}"
     mkdir -p "${LOCAL_INSTALL_DIR}/var/log/clamav"
 
     log_info "✓ 本地安装目录已创建"
     log_info "  安装路径: ${LOCAL_INSTALL_DIR}"
+    log_info "  病毒库路径: ${DATABASE_DIR}"
 }
 
 # 清理构建目录
@@ -219,7 +221,7 @@ export PKG_CONFIG_PATH="${CLAMAV_ROOT}/lib/pkgconfig:${PKG_CONFIG_PATH}"
 export CMAKE_PREFIX_PATH="${CLAMAV_ROOT}:${CMAKE_PREFIX_PATH}"
 export ACLOCAL_PATH="${CLAMAV_ROOT}/share/aclocal:${ACLOCAL_PATH}"
 
-export CLAMAV_DATABASE_DIR="${CLAMAV_ROOT}/var/lib/clamav"
+export CLAMAV_DATABASE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/database"
 export CLAMAV_LOG_DIR="${CLAMAV_ROOT}/var/log/clamav"
 export CLAMAV_CONFIG_DIR="${CLAMAV_ROOT}/etc"
 
@@ -249,8 +251,9 @@ create_db_update_script() {
     log_step "创建病毒库更新脚本..."
 
     local db_script="${PROJECT_ROOT}/update_clamav_db.sh"
+    local database_dir="${PROJECT_ROOT}/database"
 
-    cat > "${db_script}" << 'DBEOF'
+    cat > "${db_script}" << DBEOF
 #!/bin/bash
 
 # ClamAV 病毒库更新脚本
@@ -258,59 +261,58 @@ create_db_update_script() {
 
 set -e
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-LOCAL_DIR="${SCRIPT_DIR}/local"
-ENV_SCRIPT="${SCRIPT_DIR}/clamav_env.sh"
+SCRIPT_DIR="\$(cd "\$(dirname "\${BASH_SOURCE[0]}")" && pwd)"
+LOCAL_DIR="\${SCRIPT_DIR}/local"
+ENV_SCRIPT="\${SCRIPT_DIR}/clamav_env.sh"
+DATABASE_DIR="\${SCRIPT_DIR}/database"
 
 # 加载环境变量
-if [ -f "${ENV_SCRIPT}" ]; then
-    source "${ENV_SCRIPT}"
+if [ -f "\${ENV_SCRIPT}" ]; then
+    source "\${ENV_SCRIPT}"
 else
-    export CLAMAV_ROOT="${LOCAL_DIR}"
-    export PATH="${LOCAL_DIR}/bin:${LOCAL_DIR}/sbin:${PATH}"
-    export LD_LIBRARY_PATH="${LOCAL_DIR}/lib:${LD_LIBRARY_PATH}"
-    export CLAMAV_DATABASE_DIR="${LOCAL_DIR}/var/lib/clamav"
-    export CLAMAV_LOG_DIR="${LOCAL_DIR}/var/log/clamav"
+    export CLAMAV_ROOT="\${LOCAL_DIR}"
+    export PATH="\${LOCAL_DIR}/bin:\${LOCAL_DIR}/sbin:\${PATH}"
+    export LD_LIBRARY_PATH="\${LOCAL_DIR}/lib:\${LD_LIBRARY_PATH}"
+    export CLAMAV_DATABASE_DIR="\${DATABASE_DIR}"
+    export CLAMAV_LOG_DIR="\${LOCAL_DIR}/var/log/clamav"
 fi
 
 # 配置路径
-CLAMD_CONF="${CLAMAV_ROOT}/etc/clamd.conf.sample"
-FRESHCLAM_CONF="${CLAMAV_ROOT}/etc/freshclam.conf.sample"
-DATABASE_DIR="${CLAMAV_ROOT}/var/lib/clamav"
-LOG_DIR="${CLAMAV_ROOT}/var/log/clamav"
+FRESHCLAM_CONF="\${LOCAL_DIR}/etc/freshclam.conf.sample"
+LOG_DIR="\${LOCAL_DIR}/var/log/clamav"
 
 # 创建必要目录
-mkdir -p "${DATABASE_DIR}"
-mkdir -p "${LOG_DIR}"
+mkdir -p "\${DATABASE_DIR}"
+mkdir -p "\${LOG_DIR}"
 
 echo "========================================"
 echo "  ClamAV 病毒库更新"
 echo "========================================"
 echo ""
-echo "数据库目录: ${DATABASE_DIR}"
+echo "数据库目录: \${DATABASE_DIR}"
 echo ""
 
 # 使用 freshclam 更新病毒库
-if [ -f "${FRESHCLAM_CONF}" ]; then
+if [ -f "\${FRESHCLAM_CONF}" ]; then
     # 创建临时配置
-    local temp_conf=$(mktemp)
-    cp "${FRESHCLAM_CONF}" "${temp_conf}"
+    local temp_conf=\$(mktemp)
+    cp "\${FRESHCLAM_CONF}" "\${temp_conf}"
 
     # 修改配置中的路径
-    sed -i '' "s|^DatabaseDirectory.*|DatabaseDirectory ${DATABASE_DIR}|g" "${temp_conf}"
-    sed -i '' "s|^LogFile.*|LogFile ${LOG_DIR}/freshclam.log|g" "${temp_conf}"
-    sed -i '' "s|^DNSDatabaseInfo.*|DNSDatabaseInfo current.cvd.clamav.net|g" "${temp_conf}"
-    sed -i '' "s|^PrivateMirror.*|PrivateMirror database.clamav.net|g" "${temp_conf}"
+    sed -i '' "s|^DatabaseDirectory.*|DatabaseDirectory \${DATABASE_DIR}|g" "\${temp_conf}"
+    sed -i '' "s|^LogFile.*|LogFile \${LOG_DIR}/freshclam.log|g" "\${temp_conf}"
+    sed -i '' "s|^DNSDatabaseInfo.*|DNSDatabaseInfo current.cvd.clamav.net|g" "\${temp_conf}"
+    sed -i '' "s|^PrivateMirror.*|PrivateMirror database.clamav.net|g" "\${temp_conf}"
 
     echo "开始下载病毒库..."
-    "${LOCAL_DIR}/bin/freshclam" --config-file="${temp_conf}"
+    "\${LOCAL_DIR}/bin/freshclam" --config-file="\${temp_conf}"
 
-    rm -f "${temp_conf}"
+    rm -f "\${temp_conf}"
 
     echo ""
     echo "✓ 病毒库更新完成"
-    echo "病毒库位置: ${DATABASE_DIR}"
-    ls -lh "${DATABASE_DIR}"/*.cvd 2>/dev/null || ls -lh "${DATABASE_DIR}"/*.cdiff 2>/dev/null || echo "等待下载完成..."
+    echo "病毒库位置: \${DATABASE_DIR}"
+    ls -lh "\${DATABASE_DIR}"/*.cvd 2>/dev/null || ls -lh "\${DATABASE_DIR}"/*.cdiff 2>/dev/null || echo "等待下载完成..."
 else
     echo "✗ 找不到 freshclam 配置文件"
     exit 1
@@ -443,6 +445,16 @@ verify_installation() {
     fi
     echo ""
 
+    # 检查病毒库目录
+    echo "8. 病毒库目录检查:"
+    if [ -d "${DATABASE_DIR}" ]; then
+        echo "   ✓ ${DATABASE_DIR} 存在"
+    else
+        echo "   ⚠ ${DATABASE_DIR} 不存在（可能尚未下载病毒库）"
+        echo "   请运行: ${PROJECT_ROOT}/update_clamav_db.sh"
+    fi
+    echo ""
+
     # 总结
     echo "========================================"
     echo "  验证结果"
@@ -455,7 +467,7 @@ verify_installation() {
         echo "  2. 更新病毒库: ${PROJECT_ROOT}/update_clamav_db.sh"
         echo "  3. 使用扫描: ${LOCAL_INSTALL_DIR}/bin/clamscan <路径>"
         echo ""
-        echo "病毒库路径: ${LOCAL_INSTALL_DIR}/var/lib/clamav"
+        echo "病毒库路径: ${DATABASE_DIR}"
         echo "日志路径: ${LOCAL_INSTALL_DIR}/var/log/clamav"
         return 0
     else
